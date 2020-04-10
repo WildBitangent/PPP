@@ -1,0 +1,47 @@
+#!/bin/bash
+#PBS -A DD-19-32
+#PBS -N PPP_PROJ01_MPI
+#PBS -q qexp
+#PBS -l walltime=01:00:00
+#PBS -l select=8:ncpus=24:mpiprocs=16:ompthreads=1
+
+ml intel/2020a HDF5/1.10.6-intel-2020a
+
+cd "$PBS_O_WORKDIR"
+
+declare -a SIZES=(256 512 1024 2048 4096)
+declare -a PROCESSES=(1 16 32 64 128)
+
+STDOUT_FILE="run_full_mpi_2d_out.csv"
+STDERR_FILE="run_full_mpi_2d_err.txt"
+BINARY_PATH="../build/ppp_proj01"
+
+mkdir -p /scratch/temp/user/$USER/$PBS_JOBID
+OUT_FILE_PATH=/scratch/temp/user/$USER/$PBS_JOBID
+
+echo "" > $STDOUT_FILE
+
+DISK_WRITE_INTENSITY=50
+
+for procs in ${PROCESSES[*]}; do
+    for size in ${SIZES[*]}; do
+        print_csv_header=""
+        
+        if [ "$procs" -eq 1 ]; then
+            n_iters=`expr $((2000000/$size))`
+            mode=0
+            if [ "$size" -eq 256 ]; then
+                print_csv_header="-h"
+            fi
+        else
+            n_iters=`expr $((20000000/$size))`
+            mode=1
+        fi
+        
+        mpirun -np $procs $BINARY_PATH -b -g $print_csv_header -n $n_iters -m $mode -w $DISK_WRITE_INTENSITY -i input_data_$size.h5 >> $STDOUT_FILE 2>> $STDERR_FILE
+        mpirun -np $procs $BINARY_PATH -b -g -n $n_iters -m $mode -w $DISK_WRITE_INTENSITY -i input_data_$size.h5 -o $OUT_FILE_PATH/${size}x${size}_out_mpi_2d.h5 >> $STDOUT_FILE 2>> $STDERR_FILE
+        mpirun -np $procs $BINARY_PATH -b -g -p -n $n_iters -m $mode -w $DISK_WRITE_INTENSITY -i input_data_$size.h5 -o $OUT_FILE_PATH/${size}x${size}_out_mpi_2d.h5 >> $STDOUT_FILE 2>> $STDERR_FILE
+        
+        rm -f $OUT_FILE_PATH/${size}x${size}_out_mpi_2d.h5
+    done
+done

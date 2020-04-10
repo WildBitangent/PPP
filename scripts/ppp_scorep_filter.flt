@@ -1,0 +1,5 @@
+SCOREP_REGION_NAMES_BEGIN
+    EXCLUDE
+        BaseHeatSolver::ComputePoint
+        *std::*
+SCOREP_REGION_NAMES_END
