@@ -1,10 +1,10 @@
 /**
  * @file    parallel_heat_solver.h
- * @author  xlogin00 <xlogin00@stud.fit.vutbr.cz>
+ * @author  xkaras34 <xkaras34@stud.fit.vutbr.cz>
  *
  * @brief   Course: PPP 2019/2020 - Project 1
  *
- * @date    2020-MM-DD
+ * @date    2020-04-DD
  */
 
 #ifndef PARALLEL_HEAT_SOLVER_H
@@ -12,27 +12,36 @@
 
 #include "base_heat_solver.h"
 
+template<typename T>
+struct Vec2
+{
+    T x,y;
+};
+
+using Vec2i = Vec2<int>;
+using Vec2f = Vec2<float>;
+using Vec2s = Vec2<size_t>;
+
 /**
  * @brief The ParallelHeatSolver class implements parallel MPI based heat
  *        equation solver in 2D using 1D and 2D block grid decomposition.
  */
 class ParallelHeatSolver : public BaseHeatSolver
 {
-    //============================================================================//
-    //                            *** BEGIN: NOTE ***
-    //
-    // Modify this class declaration as needed.
-    // This class needs to provide at least:
-    // - Constructor which passes SimulationProperties and MaterialProperties
-    //   to the base class. (see below)
-    // - Implementation of RunSolver method. (see below)
-    // 
-    // It is strongly encouraged to define methods and member variables to improve 
-    // readability of your code!
-    //
-    //                             *** END: NOTE ***
-    //============================================================================//
-    
+    static const size_t ROOT = 0;
+    using Bufferf = std::vector<float, AlignedAllocator<float>>;
+    using Bufferi = std::vector<int, AlignedAllocator<int>>;
+
+    enum class Direction
+    {
+        Up,
+        Down,
+        Left,
+        Right,
+
+        Count
+    };
+
 public:
     /**
      * @brief Constructor - Initializes the solver. This should include things like:
@@ -58,9 +67,45 @@ public:
      */
     virtual void RunSolver(std::vector<float, AlignedAllocator<float> > &outResult);
 
+private:
+    void scatterData();
+    void gatherData(const Bufferf& what, Bufferf& where);
+    void createTypes();
+    // std::vector<int> getNeighbors();
+    void sendHaloZone(float* data, MPI_Win& win, Direction dir);
+    void save(const Bufferf& data, size_t iteration);
+    float computeMiddleTemp(const Bufferf& data);
+
+    bool isRoot() const { return mRank == ROOT; }
+
+
 protected:
-    int m_rank;     ///< Process rank in global (MPI_COMM_WORLD) communicator.
-    int m_size;     ///< Total number of processes in MPI_COMM_WORLD.
+    int mRank;     ///< Process rank in global (MPI_COMM_WORLD) communicator.
+    int mSize;     ///< Total number of processes in MPI_COMM_WORLD.
+    int mTempRank = -1;
+    AutoHandle<hid_t> mFileHandle;
+
+    MPI_Datatype mTWorkerTile;
+    MPI_Datatype mTWorkerTileInt;
+    MPI_Datatype mTTileRoot;
+    MPI_Datatype mTTileResized;
+    MPI_Datatype mTTileEastWest;
+    MPI_Datatype mTTileNorthSouth;
+
+    MPI_Comm mTemperatureComm;
+
+    std::array<Bufferf, 2> mBuffers;
+    std::array<MPI_Win, 2> mWindows;
+
+    Bufferf mDomainParams;
+    Bufferi mDomainMap;
+
+    Vec2i mGridSize;
+    Vec2s mTileSize;
+
+    // scatter/gather data
+    std::vector<int> mTileCounts;
+	std::vector<int> mTileDisplacements;
 };
 
 #endif // PARALLEL_HEAT_SOLVER_H
