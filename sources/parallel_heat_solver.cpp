@@ -8,7 +8,6 @@
  */
 
 #include "parallel_heat_solver.h"
-
 ParallelHeatSolver::ParallelHeatSolver(SimulationProperties &simulationProps,
 									   MaterialProperties &materialProps)
 	: BaseHeatSolver (simulationProps, materialProps)
@@ -44,18 +43,22 @@ ParallelHeatSolver::ParallelHeatSolver(SimulationProperties &simulationProps,
 	{
 		if (simulationProps.IsUseParallelIO())
 		{
-			const auto& path = simulationProps.GetOutputFileName("par").c_str();
+			const auto& path = simulationProps.GetOutputFileName("par");
 			AutoHandle<hid_t> plist_id(H5Pcreate(H5P_FILE_ACCESS), H5Pclose);
 			H5Pset_fapl_mpio(plist_id, MPI_COMM_WORLD, MPI_INFO_NULL);
 
-			mFileHandle.Set(H5Fcreate(path, H5F_ACC_TRUNC, H5P_DEFAULT, plist_id), H5Fclose);
+			mFileHandle.Set(H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, plist_id), H5Fclose);
 		}
 		else
 		{
 			if (isRoot())
 			{
-				const auto& path = simulationProps.GetOutputFileName("seq").c_str();
-				mFileHandle.Set(H5Fcreate(path, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT), H5Fclose);
+				// Imagine, that intel compiler had a bug, which optimizes this variable to another dimension
+				// and you already spent hours of debugging, why the hack wouldn't the file create
+				// const auto& path = simulationProps.GetOutputFileName("seq").c_str();
+				
+				const auto& path = simulationProps.GetOutputFileName("seq");
+				mFileHandle.Set(H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT), H5Fclose);
 			}
 		}
 	}	
@@ -106,15 +109,12 @@ void ParallelHeatSolver::RunSolver(std::vector<float, AlignedAllocator<float> > 
 					m_materialProperties.GetCoolerTemp()
 				);
 
-		sendHaloZone(&mBuffers[backBuff][0], mWindows[backBuff], dir);
+		// sendHaloZone(&mBuffers[backBuff][0], mWindows[backBuff], dir);
 	};
 
 	for(size_t iter = 0; iter < m_simulationProperties.GetNumIterations(); ++iter)
 	{
-		// Just open the window for communication
-		MPI_Win_fence(MPI_MODE_NOSTORE | MPI_MODE_NOPRECEDE, mWindows[backBuff]); // TODO check MPI_MODE_NOPRECEDE
-
-		#pragma omp parallel sections // TODO this won't work in parallel most likely
+		#pragma omp parallel sections
 		{
 			#pragma omp section // Up
 			{
@@ -134,7 +134,7 @@ void ParallelHeatSolver::RunSolver(std::vector<float, AlignedAllocator<float> > 
 			{
 				if (mRank % mGridSize.x != 0)
 				{
-					Vec2s start = { 2, 2 };
+					Vec2s start = { 2, 4 };
 					Vec2s end = { 4, 2 + mTileSize.y };
 
 					if (mRank < mGridSize.x) start.y = 4;
@@ -148,7 +148,7 @@ void ParallelHeatSolver::RunSolver(std::vector<float, AlignedAllocator<float> > 
 			{
 				if (mRank % mGridSize.x != mGridSize.x - 1)
 				{
-					Vec2s start = { mTileSize.x, 2 };
+					Vec2s start = { mTileSize.x, 4 };
 					Vec2s end = { 2 + mTileSize.x, 2 + mTileSize.y };
 
 					if (mRank < mGridSize.x) start.y = 4;
@@ -172,6 +172,11 @@ void ParallelHeatSolver::RunSolver(std::vector<float, AlignedAllocator<float> > 
 				}
 			}
 		}
+
+		// Just open the window for communication
+		MPI_Win_fence(MPI_MODE_NOSTORE | MPI_MODE_NOPRECEDE, mWindows[backBuff]);
+		for (size_t i = 0; i < static_cast<size_t>(Direction::Count); ++i)
+			sendHaloZone(&mBuffers[backBuff][0], mWindows[backBuff], static_cast<Direction>(i));
 
 		UpdateTile(
 			mBuffers[frontBuff].data(),
@@ -285,7 +290,7 @@ void ParallelHeatSolver::scatterData()
 		MPI_Info_create(&info);
 		MPI_Info_set(info, "same_size", "true");
 		MPI_Info_set(info, "same_disp_unit", "true");
-		MPI_Info_set(info, "no_lock", "true"); // TODO check if it really works
+		MPI_Info_set(info, "no_lock", "true"); 
 		auto winsize = sizeof(float) * (mTileSize.y + 4) * (mTileSize.x + 4);
 
 		for (size_t i = 0; i < mBuffers.size(); ++i)
@@ -403,8 +408,8 @@ void ParallelHeatSolver::save(const Bufferf& data, size_t iteration)
 	if (m_simulationProperties.IsUseParallelIO())
 	{
 		hsize_t gridSize[] = { m_materialProperties.GetEdgeSize(), m_materialProperties.GetEdgeSize() };
-		hsize_t chunkSize[] = { mTileSize.x, mTileSize.y };
-		hsize_t tileSize[] = { mTileSize.x + 4, mTileSize.y + 4 };
+		hsize_t chunkSize[] = { mTileSize.y, mTileSize.x };
+		hsize_t tileSize[] = { mTileSize.y + 4, mTileSize.x + 4 };
 
 		auto groupNum = static_cast<unsigned long long>(iteration / m_simulationProperties.GetDiskWriteIntensity());
 		std::string groupName = "Timestep_" + std::to_string(groupNum);

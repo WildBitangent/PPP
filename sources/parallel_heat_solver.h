@@ -4,7 +4,7 @@
  *
  * @brief   Course: PPP 2019/2020 - Project 1
  *
- * @date    2020-04-DD
+ * @date    2020-04-15
  */
 
 #ifndef PARALLEL_HEAT_SOLVER_H
